@@ -1,6 +1,6 @@
 import type { YuqueDoc } from '../types'
 import YuqueClient from './client'
-import { BaseDoc } from '@elog/types'
+import { BaseDoc, DocDetail } from '@elog/types'
 import { out } from '@elog/shared'
 import { YuqueWithTokenConfig } from './types'
 import { IllegalityDocFormat } from '../const'
@@ -59,9 +59,13 @@ class YuqueWithToken {
   /**
    * 获取文章详情列表
    * @param ids 需要下载的doc_id列表
+   * @param onDocDownloaded 单篇文档下载完成回调（可选），用于实时处理文档
    */
-  async getDocDetailList(ids: string[]) {
-    return await this.ctx.getDocDetailList(this.pages, ids)
+  async getDocDetailList(
+    ids: string[],
+    onDocDownloaded?: (article: DocDetail, index: number, total: number) => Promise<void> | void,
+  ) {
+    return await this.ctx.getDocDetailList(this.pages, ids, onDocDownloaded)
   }
 }
 

@@ -93,7 +93,9 @@ class Elog {
    */
   initWritingPlatform(config: ElogConfig) {
     if (config.write.platform === WritePlatform.YUQUE) {
-      let yuqueConfig = config.write.yuque as YuqueWithTokenConfig
+      let yuqueConfig = { ...config.write.yuque } as YuqueWithTokenConfig
+      // 传递 cachePath 用于生成唯一的临时缓存文件名
+      yuqueConfig.cachePath = config.extension.cachePath
       return new YuqueWithToken(yuqueConfig)
     } else if (config.write.platform === WritePlatform.YUQUE_WITH_PWD) {
       let yuqueConfig = config.write['yuque-pwd'] as YuqueWithPwdConfig
@@ -139,7 +141,7 @@ class Elog {
   }
 
   /**
-   * 下载文章详情列表
+   * 下载文章详情列表 - 支持边下载边处理
    */
   async fetchArticles() {
     if (this.config.write.platform === WritePlatform.YUQUE_WITH_PWD) {
@@ -206,27 +208,88 @@ class Elog {
       return
     }
     this.needUpdate = true
-    let docDetailList = (await this.downloaderClient.getDocDetailList(ids)) as DocDetail[]
-    if (this.config.deploy.platform === DeployPlatformEnum.LOCAL) {
-      docDetailList = this.processDocPath(docDetailList)
-    }
-    // 处理文章的图片
-    if (this.config.image?.enable) {
-      out.access('开始处理图片...')
-      docDetailList = await this.processImage(docDetailList)
-    }
-    // 缓存需要更新的文档
-    this.needUpdateArticles = docDetailList
-    // 更新缓存里的文章
-    for (const docDetail of docDetailList) {
-      const { index, status } = idMap[docDetail.doc_id]
-      if (status === DocStatus.create) {
-        // 新增文档
-        this.cachedArticles.push(docDetail)
-      } else {
-        // 更新文档
-        this.cachedArticles[index as number] = docDetail
+
+    // 判断是否启用边下载边写（仅本地部署且未启用自定义处理）
+    const enableStreamWrite =
+      this.config.deploy.platform === DeployPlatformEnum.LOCAL &&
+      !this.config.image?.enable &&
+      (this.config.write.platform === WritePlatform.YUQUE ||
+        this.config.write.platform === WritePlatform.YUQUE_WITH_PWD) // 支持密码登录方式
+
+    if (enableStreamWrite) {
+      // 边下载边写模式
+      out.access('边下载边写模式', '启用实时处理，每下载一篇文档立即写入')
+      out.info('待下载数', String(ids.length))
+      // Token方式和密码方式现在都使用相同的签名：getDocDetailList(ids, callback)
+      await (this.downloaderClient as any).getDocDetailList(
+        ids,
+        // 每下载完一篇文档的回调
+        async (article: DocDetail, _index: number, _total: number) => {
+          await this.processAndWriteSingleArticle(article, idMap)
+          // 实时保存缓存
+          this.writeArticleCache()
+        },
+      )
+      // 处理后的文档列表从 cachedArticles 中提取
+      this.needUpdateArticles = ids
+        .map((id) => this.cachedArticles.find((doc) => doc.doc_id === id)!)
+        .filter(Boolean)
+    } else {
+      // 原有的批量处理模式
+      let docDetailList = (await this.downloaderClient.getDocDetailList(ids)) as DocDetail[]
+      if (this.config.deploy.platform === DeployPlatformEnum.LOCAL) {
+        docDetailList = this.processDocPath(docDetailList)
       }
+      // 处理文章的图片
+      if (this.config.image?.enable) {
+        out.access('开始处理图片...')
+        docDetailList = await this.processImage(docDetailList)
+      }
+      // 缓存需要更新的文档
+      this.needUpdateArticles = docDetailList
+      // 更新缓存里的文章
+      for (const docDetail of docDetailList) {
+        const { index, status } = idMap[docDetail.doc_id]
+        if (status === DocStatus.create) {
+          // 新增文档
+          this.cachedArticles.push(docDetail)
+        } else {
+          // 更新文档
+          this.cachedArticles[index as number] = docDetail
+        }
+      }
+    }
+  }
+
+  /**
+   * 处理并写入单篇文章（用于边下载边写模式）
+   */
+  private async processAndWriteSingleArticle(article: DocDetail, idMap: DocStatusMap) {
+    const { index, status } = idMap[article.doc_id]
+
+    // 处理文档路径
+    let postPath = this.config.deploy.local.outputDir
+    if (this.config.deploy.local.catalog && Array.isArray(article.catalog)) {
+      const tocPath = article.catalog.map((item) => item.title).join('/')
+      postPath = path.join(postPath, tocPath)
+    }
+    article.docPath = postPath
+
+    // 直接写入本地文件
+    try {
+      await this.deployClient.deploy([article])
+    } catch (error: any) {
+      out.warning('写入文件失败', `${article.properties.title}: ${error.message}`)
+      article.needUpdate = DocFail
+    }
+
+    // 更新缓存中的文章
+    if (status === DocStatus.create) {
+      // 新增文档
+      this.cachedArticles.push(article)
+    } else {
+      // 更新文档
+      this.cachedArticles[index as number] = article
     }
   }
 
@@ -377,22 +440,33 @@ class Elog {
       }
       return
     }
-    // 部署文章
-    const realArticles = await this.deployArticles()
-    if (realArticles?.length) {
-      // 将this.cachedArticles中的文章替换成realArticles中的文章
-      this.cachedArticles = this.cachedArticles.map((item) => {
-        const realArticle = realArticles.find((realItem) => realItem.doc_id === item.doc_id)
-        if (realArticle) {
-          return realArticle
-        }
-        return item
-      })
+
+    // 判断是否已经写入过（边下载边写模式）
+    const isStreamWriteMode =
+      this.config.deploy.platform === DeployPlatformEnum.LOCAL &&
+      !this.config.image?.enable &&
+      this.config.write.platform === WritePlatform.YUQUE
+
+    if (!isStreamWriteMode) {
+      // 批量模式：部署文章
+      const realArticles = await this.deployArticles()
+      if (realArticles?.length) {
+        // 将this.cachedArticles中的文章替换成realArticles中的文章
+        this.cachedArticles = this.cachedArticles.map((item) => {
+          const realArticle = realArticles.find((realItem) => realItem.doc_id === item.doc_id)
+          if (realArticle) {
+            return realArticle
+          }
+          return item
+        })
+      }
+      // 写入文章缓存
+      this.writeArticleCache()
     }
+    // else: 边下载边写模式已经在 fetchArticles 中写入了缓存
+
     // 删除本地不存在的文章
     this.syncForced()
-    // 写入文章缓存
-    this.writeArticleCache()
     out.access('任务结束', '同步完成！')
   }
 }

@@ -190,11 +190,16 @@ class YuqueClient {
   }
 
   /**
-   * 获取文章详情列表
-   * @param cachedDocs
-   * @param ids
+   * 获取文章详情列表 - 支持边下载边处理回调
+   * @param cachedDocs 文档列表
+   * @param ids 需要下载的文档 ID 列表
+   * @param onDocDownloaded 单篇文档下载完成回调（可选），用于实时处理文档
    */
-  async getDocDetailList(cachedDocs: YuqueDoc[], ids: string[]) {
+  async getDocDetailList(
+    cachedDocs: YuqueDoc[],
+    ids: string[],
+    onDocDownloaded?: (article: DocDetail, index: number, total: number) => Promise<void> | void,
+  ) {
     let articleList: DocDetail[] = []
     let docs = cachedDocs
     if (ids.length) {
@@ -214,6 +219,9 @@ class YuqueClient {
     out.info('待下载数', String(docs.length))
     out.access('开始下载文档...')
     docs = docs.map((item, index) => ({ ...item, _index: index + 1 } as YuqueDoc))
+
+    let completedCount = 0
+
     const promise = async (doc: YuqueDoc) => {
       out.info(`下载文档 ${doc._index}/${docs.length}   `, doc.title)
       let article = await this.getDocDetail(doc.slug)
@@ -228,6 +236,18 @@ class YuqueClient {
       article.body_original = body
       article.updated = new Date(article.updated_at).getTime()
       articleList.push(article)
+
+      // 实时回调处理
+      if (onDocDownloaded) {
+        completedCount++
+        out.info('处理进度', `${completedCount}/${docs.length} 篇文档已处理`)
+        try {
+          await onDocDownloaded(article, completedCount, docs.length)
+        } catch (error: any) {
+          out.warning('回调处理失败', `${article.title}: ${error.message}`)
+          // 继续处理下一篇，不中断整个流程
+        }
+      }
     }
     await asyncPool(this.config.limit || 3, docs, promise)
     out.info('已下载数', String(articleList.length))

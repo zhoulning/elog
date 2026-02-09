@@ -16,4 +16,6 @@ export interface YuqueWithTokenConfig {
   formatExt?: FormatExtConfig
   /** 下载并发数 */
   limit?: number
+  /** 缓存文件路径（用于生成唯一的临时缓存文件名） */
+  cachePath?: string
 }

@@ -209,10 +209,11 @@ class Elog {
     }
     this.needUpdate = true
 
-    // 判断是否启用边下载边写（仅本地部署且未启用自定义处理）
+    // 判断是否启用边下载边写
+    // 条件：本地部署 + (未启用图片 或 图片是本地下载) + 语雀平台
     const enableStreamWrite =
       this.config.deploy.platform === DeployPlatformEnum.LOCAL &&
-      !this.config.image?.enable &&
+      (!this.config.image?.enable || this.config.image?.platform === 'local') &&
       (this.config.write.platform === WritePlatform.YUQUE ||
         this.config.write.platform === WritePlatform.YUQUE_WITH_PWD) // 支持密码登录方式
 
@@ -275,9 +276,22 @@ class Elog {
     }
     article.docPath = postPath
 
-    // 直接写入本地文件
+    // 处理图片（如果启用）
+    if (this.config.image?.enable) {
+      try {
+        const processed = await this.processImage([article])
+        if (processed.length > 0) {
+          article = processed[0]
+        }
+      } catch (error: any) {
+        out.warning('图片处理失败', `${article.properties.title}: ${error.message}`)
+        article.needUpdate = ImageFail
+      }
+    }
+
+    // 写入本地文件
     try {
-      await this.deployClient.deploy([article])
+      await this.deployClient.deploy([article], this.imageClient)
     } catch (error: any) {
       out.warning('写入文件失败', `${article.properties.title}: ${error.message}`)
       article.needUpdate = DocFail
@@ -444,7 +458,7 @@ class Elog {
     // 判断是否已经写入过（边下载边写模式）
     const isStreamWriteMode =
       this.config.deploy.platform === DeployPlatformEnum.LOCAL &&
-      !this.config.image?.enable &&
+      (!this.config.image?.enable || this.config.image?.platform === 'local') &&
       (this.config.write.platform === WritePlatform.YUQUE ||
         this.config.write.platform === WritePlatform.YUQUE_WITH_PWD) // 支持密码登录方式
 

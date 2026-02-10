@@ -445,7 +445,8 @@ class Elog {
     const isStreamWriteMode =
       this.config.deploy.platform === DeployPlatformEnum.LOCAL &&
       !this.config.image?.enable &&
-      this.config.write.platform === WritePlatform.YUQUE
+      (this.config.write.platform === WritePlatform.YUQUE ||
+        this.config.write.platform === WritePlatform.YUQUE_WITH_PWD) // 支持密码登录方式
 
     if (!isStreamWriteMode) {
       // 批量模式：部署文章

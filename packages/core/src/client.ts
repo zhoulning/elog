@@ -100,6 +100,9 @@ class Elog {
     } else if (config.write.platform === WritePlatform.YUQUE_WITH_PWD) {
       let yuqueConfig = config.write['yuque-pwd'] as YuqueWithPwdConfig
       return new YuqueWithPwd(yuqueConfig)
+    } else if (config.write.platform === WritePlatform.YUQUE_WITH_REPO_PWD) {
+      let yuqueConfig = config.write['yuque-repo-pwd'] as YuqueWithPwdConfig
+      return new YuqueWithPwd(yuqueConfig)
     } else if (config.write.platform === WritePlatform.NOTION) {
       let notionConfig = config.write.notion as NotionConfig
       return new NotionClient(notionConfig)
@@ -144,7 +147,10 @@ class Elog {
    * 下载文章详情列表 - 支持边下载边处理
    */
   async fetchArticles() {
-    if (this.config.write.platform === WritePlatform.YUQUE_WITH_PWD) {
+    if (
+      this.config.write.platform === WritePlatform.YUQUE_WITH_PWD ||
+      this.config.write.platform === WritePlatform.YUQUE_WITH_REPO_PWD
+    ) {
       const client = this.downloaderClient as YuqueWithPwd
       await client.login()
     }
@@ -215,7 +221,8 @@ class Elog {
       this.config.deploy.platform === DeployPlatformEnum.LOCAL &&
       (!this.config.image?.enable || this.config.image?.platform === 'local') &&
       (this.config.write.platform === WritePlatform.YUQUE ||
-        this.config.write.platform === WritePlatform.YUQUE_WITH_PWD) // 支持密码登录方式
+        this.config.write.platform === WritePlatform.YUQUE_WITH_PWD ||
+        this.config.write.platform === WritePlatform.YUQUE_WITH_REPO_PWD) // 支持密码登录方式
 
     if (enableStreamWrite) {
       // 边下载边写模式

@@ -1,6 +1,12 @@
 export interface YuqueWithPwdConfig {
-  username: string
-  password: string
+  /** 语雀账号（邮箱/手机号/登录名） */
+  username?: string
+  /** 语雀账号密码 */
+  password?: string
+  /** 语雀知识库口令（仓库访问密码） */
+  repoPassword?: string
+  /** 浏览器会话 cookie（用于口令页/验证码等场景） */
+  cookie?: string
   host?: string
   login: string
   repo: string

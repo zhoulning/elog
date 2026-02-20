@@ -21,10 +21,20 @@ class YuqueClient {
 
   constructor(config: YuqueWithPwdConfig) {
     this.config = config
-    this.config.username = config.username || process.env.YUQUE_USERNAME!
-    this.config.password = config.password || process.env.YUQUE_PASSWORD!
-    if (!this.config.username || !this.config.password || !this.config.login || !this.config.repo) {
+    this.config.username = config.username || process.env.YUQUE_USERNAME
+    this.config.password = config.password || process.env.YUQUE_PASSWORD
+    this.config.repoPassword = config.repoPassword || process.env.YUQUE_REPO_PASSWORD
+    this.config.cookie = config.cookie || process.env.YUQUE_COOKIE
+    if (!this.config.login || !this.config.repo) {
       out.err('缺少参数', '缺少语雀配置信息')
+      process.exit(-1)
+    }
+    if (
+      !this.config.cookie &&
+      !this.config.repoPassword &&
+      (!this.config.username || !this.config.password)
+    ) {
+      out.err('缺少参数', '缺少语雀账号密码/知识库口令/浏览器Cookie')
       process.exit(-1)
     }
     this.namespace = `${this.config.login}/${this.config.repo}`
@@ -39,39 +49,132 @@ class YuqueClient {
    * 登陆
    */
   async login() {
-    const loginInfo = {
-      login: this.config.username,
-      password: encrypt(this.config.password),
-      loginType: 'password',
-    }
-
-    const res = await request<YuQueResponse<YuqueLogin>>(
-      `${this.baseUrl}/api/mobile_app/accounts/login?language=zh-cn`,
-      {
-        method: 'post',
-        data: loginInfo,
-        headers: {
-          Referer: this.baseUrl + '/login?goto=https%3A%2F%2Fwww.yuque.com%2Fdashboard',
-          origin: this.baseUrl,
-          'user-agent':
-            'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/20G81 YuqueMobileApp/1.0.2 (AppBuild/650 Device/Phone Locale/zh-cn Theme/light YuqueType/public)',
-        },
-      },
-    )
-    if (res.status !== 200) {
-      out.err('语雀登陆失败')
-      // @ts-ignore
-      out.err(res)
-      process.exit(-1)
-    }
-    if (res.headers['set-cookie']) {
-      // 保存cookie
+    if (this.config.cookie) {
       this.cookie = {
         time: Date.now(),
-        data: res.headers['set-cookie'] as string,
+        data: this.config.cookie,
       }
+      out.info('使用浏览器Cookie登录')
+      return
     }
-    out.info('语雀登陆成功')
+
+    if (this.config.username && this.config.password) {
+      const loginInfo = {
+        login: this.config.username,
+        password: encrypt(this.config.password),
+        loginType: 'password',
+      }
+
+      const res = await request<YuQueResponse<YuqueLogin>>(
+        `${this.baseUrl}/api/mobile_app/accounts/login?language=zh-cn`,
+        {
+          method: 'post',
+          data: loginInfo,
+          headers: {
+            Referer: this.baseUrl + '/login?goto=https%3A%2F%2Fwww.yuque.com%2Fdashboard',
+            origin: this.baseUrl,
+            'user-agent':
+              'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/20G81 YuqueMobileApp/1.0.2 (AppBuild/650 Device/Phone Locale/zh-cn Theme/light YuqueType/public)',
+          },
+        },
+      )
+      if (res.status !== 200) {
+        out.err('语雀登陆失败')
+        // @ts-ignore
+        out.err(res)
+        process.exit(-1)
+      }
+      this.updateCookie(res.headers['set-cookie'])
+      out.info('语雀登陆成功')
+    } else {
+      out.info('跳过账号登录', '使用知识库口令模式')
+    }
+
+    if (this.config.repoPassword) {
+      await this.unlockRepoByPassword()
+    }
+  }
+
+  private updateCookie(cookie?: string | string[]) {
+    if (!cookie) return
+    const next = Array.isArray(cookie) ? cookie.join('; ') : cookie
+    this.cookie = {
+      time: Date.now(),
+      data: this.cookie?.data ? `${this.cookie.data}; ${next}` : next,
+    }
+  }
+
+  private async unlockRepoByPassword() {
+    const repoUrl = `${this.baseUrl}/${this.namespace}`
+    const firstPage = await request<string>(repoUrl, {
+      method: 'get',
+      dataType: 'text',
+      headers: {
+        cookie: this.cookie?.data,
+      },
+    })
+    this.updateCookie(firstPage.headers['set-cookie'])
+
+    const firstDom = new JSDOM(`${firstPage.data}`)
+    const bookExists = !!firstDom?.window?.appData?.book
+    if (bookExists) {
+      firstDom.window.close()
+      out.info('知识库口令', '知识库已可访问，无需再次解锁')
+      return
+    }
+
+    const passwordInput = firstDom.window.document.querySelector('input[type="password"]') as any
+    const formEl = passwordInput?.closest('form') as any
+    if (!passwordInput || !formEl) {
+      firstDom.window.close()
+      out.err('知识库口令验证失败', '未找到语雀口令表单，可能页面结构已变更')
+      process.exit(-1)
+    }
+
+    const formData: Record<string, any> = {}
+    const hiddenInputs = Array.from(formEl.querySelectorAll('input[type="hidden"]')) as any[]
+    hiddenInputs.forEach((input) => {
+      const name = input.name
+      const value = input.value
+      if (name) formData[name] = value
+    })
+    const passwordField = passwordInput.name || 'password'
+    formData[passwordField] = this.config.repoPassword
+
+    const action = formEl.getAttribute('action') || `/${this.namespace}`
+    const method = (formEl.getAttribute('method') || 'post').toLowerCase()
+    const actionUrl = new URL(action, `${this.baseUrl}/`).toString()
+    firstDom.window.close()
+
+    const submitRes = await request<string>(actionUrl, {
+      method: method as any,
+      data: formData,
+      contentType: 'form',
+      dataType: 'text',
+      headers: {
+        cookie: this.cookie?.data,
+        Referer: repoUrl,
+        origin: this.baseUrl,
+      },
+    })
+    this.updateCookie(submitRes.headers['set-cookie'])
+
+    const verifyRes = await request<string>(repoUrl, {
+      method: 'get',
+      dataType: 'text',
+      headers: {
+        cookie: this.cookie?.data,
+      },
+    })
+    this.updateCookie(verifyRes.headers['set-cookie'])
+    const verifyDom = new JSDOM(`${verifyRes.data}`)
+    const unlocked = !!verifyDom?.window?.appData?.book
+    verifyDom.window.close()
+    if (!unlocked) {
+      out.err('知识库口令验证失败', '请检查 YUQUE_REPO_PASSWORD 是否正确')
+      process.exit(-1)
+    }
+    out.info('知识库口令验证成功')
   }
 
   /**

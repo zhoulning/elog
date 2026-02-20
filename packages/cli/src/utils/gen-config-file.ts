@@ -19,6 +19,13 @@ const configJsStr =
   '      onlyPublic: false,\n' +
   '      onlyPublished: true,\n' +
   '    },\n' +
+  "    'yuque-repo-pwd': {\n" +
+  '      repoPassword: process.env.YUQUE_REPO_PASSWORD,\n' +
+  '      login: process.env.YUQUE_LOGIN,\n' +
+  '      repo: process.env.YUQUE_REPO,\n' +
+  '      onlyPublic: false,\n' +
+  '      onlyPublished: true,\n' +
+  '    },\n' +
   '    notion: {\n' +
   '      token: process.env.NOTION_TOKEN,\n' +
   '      databaseId: process.env.NOTION_DATABASE_ID,\n' +

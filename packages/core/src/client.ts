@@ -322,7 +322,8 @@ class Elog {
       let catalog: any[] = []
       if (
         this.config.write.platform === WritePlatform.YUQUE ||
-        this.config.write.platform === WritePlatform.YUQUE_WITH_PWD
+        this.config.write.platform === WritePlatform.YUQUE_WITH_PWD ||
+        this.config.write.platform === WritePlatform.YUQUE_WITH_REPO_PWD
       ) {
         const yuqueClient = this.downloaderClient
         catalog = yuqueClient.ctx.catalog
@@ -467,7 +468,8 @@ class Elog {
       this.config.deploy.platform === DeployPlatformEnum.LOCAL &&
       (!this.config.image?.enable || this.config.image?.platform === 'local') &&
       (this.config.write.platform === WritePlatform.YUQUE ||
-        this.config.write.platform === WritePlatform.YUQUE_WITH_PWD) // 支持密码登录方式
+        this.config.write.platform === WritePlatform.YUQUE_WITH_PWD ||
+        this.config.write.platform === WritePlatform.YUQUE_WITH_REPO_PWD) // 支持密码登录方式
 
     if (!isStreamWriteMode) {
       // 批量模式：部署文章
